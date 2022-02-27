@@ -1,18 +1,18 @@
 use aes::Aes128;
 use aes::cipher::{
     BlockCipher, BlockEncrypt, BlockDecrypt, KeyInit,
-    generic_array::GenericArray,
 };
+use aes::cipher::generic_array::{GenericArray, typenum::U16};
 use bitvec::prelude::*;
+use rand::{Rng, SeedableRng};
 
-const SECPAR: usize = 127;
-const SECPAR_BYTE: usize = (SECPAR+1)/8;
+const BLOCK_LEN: usize = 16;
+type SliceBlock = [u8; BLOCK_LEN];
+type GenericBlock = GenericArray<u8, U16>;
+type CW = u32;
 
-type Key = [u8; SECPAR_BYTE];
-type CW = [u8; SECPAR_BYTE+1];
-
-const KEY0: Key = [0u8; 16];
-const KEY1: Key = [1u8; 16];
+const KEY0: SliceBlock = [0u8; BLOCK_LEN];
+const KEY1: SliceBlock = [1u8; BLOCK_LEN];
 
 struct DPF {
     cipher0: Aes128,
@@ -33,22 +33,32 @@ impl DPF {
         }
     }
 
-    fn prg(&self, seed: &Key) -> (Vec<u8>, Vec<u8>) {
+    fn prg(&self, out0: &mut GenericBlock, out1: &mut GenericBlock, seed: &GenericBlock) {
         // check the msb is 0
-        assert_eq!(seed[SECPAR_BYTE - 1] >> 8, 0);
+        assert_eq!(seed[BLOCK_LEN - 1] >> 8, 0);
 
         // use fixed-key construction, i.e.,
         // G(s) = (AES_k0(s||0) xor s||0) || (AES_k1(s||0) xor s||0)
-        let mut out0 = GenericArray::from(seed.clone());
-        let mut out1 = GenericArray::from(seed.clone());
-        self.cipher0.encrypt_block(&mut out0);
-        self.cipher1.encrypt_block(&mut out1);
+        out0.copy_from_slice(&seed);
+        out1.copy_from_slice(&seed);
+        self.cipher0.encrypt_block(out0);
+        self.cipher1.encrypt_block(out1);
         xor(out0.as_mut_slice(), seed);
         xor(out1.as_mut_slice(), seed);
-        (out0.to_vec(), out1.to_vec())
     }
 
-    fn gen(&self, alpha: u32, beta: u32) -> (GOut, GOut, Vec<CW>) {
+    fn gen(&self, alpha: u32, beta: u32) -> (GenericBlock, GenericBlock, Vec<CW>) {
+        let a = alpha.view_bits::<Lsb0>();
+        let mut rng = rand_chacha::ChaCha8Rng::from_entropy();
+        let s0 = rng.gen::<SliceBlock>();
+        let s1 = rng.gen::<SliceBlock>();
         unimplemented!()
     }
+}
+
+#[test]
+fn test_block_size() {
+    let a: SliceBlock = [0; BLOCK_LEN];
+    let b: GenericBlock = GenericArray::from(a);
+    assert_eq!(a.len(), b.as_slice().len());
 }
