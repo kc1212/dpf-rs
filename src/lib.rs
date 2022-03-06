@@ -1,9 +1,7 @@
 extern crate core;
 
 use aes::Aes128;
-use aes::cipher::{
-    BlockEncrypt, KeyInit,
-};
+use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::cipher::generic_array::{GenericArray, typenum::U16};
 use rand::{Rng, SeedableRng};
 
@@ -87,7 +85,7 @@ impl DPF {
         (out0, out1)
     }
 
-    pub fn gen(&self, a: &Vec<bool>) -> (GenericBlock, GenericBlock, Vec<CW>) {
+    pub fn gen(&self, a: &Vec<bool>) -> (GenericBlock, GenericBlock, Vec<CW>, u128) {
         let n = a.len();
         let mut t0 = vec![0u8; n];
         let mut t1 = vec![1u8; n];
@@ -135,10 +133,13 @@ impl DPF {
             }
             // println!("[gen] s0={:?}, s1={:?}, t0={:?}, t1={:?}", s0.last().unwrap(), s1.last().unwrap(), t0.last().unwrap(), t1.last().unwrap());
         }
-        (s0[0], s1[0], cw)
+        let beta = 1u128;
+        let final_cw = neg_one_pow(*t1.last().unwrap()).wrapping_mul(
+            beta.wrapping_sub(convert(s0.last().unwrap())).wrapping_add(convert(s1.last().unwrap())));
+        (s0[0], s1[0], cw, final_cw)
     }
 
-    pub fn eval(&self, b: u8, k: &GenericBlock, cw: &Vec<CW>, x: &Vec<bool>) -> u8 {
+    pub fn eval(&self, b: u8, k: &GenericBlock, cw: &Vec<CW>, final_cw: u128, x: &Vec<bool>) -> u128 {
         let mut t = vec![b];
         let mut s = vec![*k];
         let n = cw.len();
@@ -159,8 +160,24 @@ impl DPF {
             }
             // println!("[eva] b={:?}, s={:?}, t={:?}", b, s.last().unwrap(), t.last().unwrap());
         }
-        *t.last().unwrap()
+        neg_one_pow(b).wrapping_mul(
+            convert(s.last().unwrap()).wrapping_add( *t.last().unwrap() as u128 * final_cw))
     }
+}
+
+fn neg_one_pow(choice: u8) -> u128 {
+    assert!(choice == 0 || choice == 1);
+    if choice == 0 {
+        1
+    } else {
+        0u128.wrapping_sub(1u128)
+    }
+}
+
+fn convert(s: &GenericBlock) -> u128 {
+    assert!(s.len() >= std::mem::size_of::<u128>());
+    let (buf, _) = s.as_slice().split_at(std::mem::size_of::<u128>());
+    u128::from_be_bytes(buf.try_into().unwrap())
 }
 
 #[test]
@@ -199,29 +216,29 @@ fn test_bitmul() {
 fn test_dpf_gen_3() {
     let dpf = DPF::new();
     let true_alpha = vec![false, false, false];
-    let (k0, k1, cw) = dpf.gen(&true_alpha);
+    let (k0, k1, cw, final_cw) = dpf.gen(&true_alpha);
     assert_eq!(cw.len(), true_alpha.len());
     {
-        let out0 = dpf.eval(0, &k0, &cw, &true_alpha);
-        let out1 = dpf.eval(1, &k1, &cw, &true_alpha);
-        assert_eq!(1, out0 ^ out1);
+        let out0 = dpf.eval(0, &k0, &cw, final_cw, &true_alpha);
+        let out1 = dpf.eval(1, &k1, &cw, final_cw, &true_alpha);
+        assert_eq!(1, out0.wrapping_add(out1));
     }
     {
         let alpha = vec![true, false, false];
-        let out0 = dpf.eval(0, &k0, &cw, &alpha);
-        let out1 = dpf.eval(1, &k1, &cw, &alpha);
-        assert_eq!(0, out0 ^ out1);
+        let out0 = dpf.eval(0, &k0, &cw, final_cw, &alpha);
+        let out1 = dpf.eval(1, &k1, &cw, final_cw, &alpha);
+        assert_eq!(0, out0.wrapping_add(out1));
     }
     {
         let alpha = vec![true, true, false];
-        let out0 = dpf.eval(0, &k0, &cw, &alpha);
-        let out1 = dpf.eval(1, &k1, &cw, &alpha);
-        assert_eq!(0, out0 ^ out1);
+        let out0 = dpf.eval(0, &k0, &cw, final_cw, &alpha);
+        let out1 = dpf.eval(1, &k1, &cw, final_cw, &alpha);
+        assert_eq!(0, out0.wrapping_add(out1));
     }
     {
         let alpha = vec![true, true, true];
-        let out0 = dpf.eval(0, &k0, &cw, &alpha);
-        let out1 = dpf.eval(1, &k1, &cw, &alpha);
-        assert_eq!(0, out0 ^ out1);
+        let out0 = dpf.eval(0, &k0, &cw, final_cw, &alpha);
+        let out1 = dpf.eval(1, &k1, &cw, final_cw, &alpha);
+        assert_eq!(0, out0.wrapping_add(out1));
     }
 }
